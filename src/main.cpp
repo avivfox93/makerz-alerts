@@ -101,7 +101,13 @@ void leds_fadeIn(CRGB target)
     delay(10);
   };
 }
-
+void leds_programStarted()
+{
+  // fill_solid(leds, NUM_LEDS, CRGB::Green); // https://github.com/FastLED/FastLED/wiki/Pixel-reference#predefined-colors-list
+  leds_fadeIn(CRGB::WhiteSmoke);
+  delay(500);
+  leds_fadeOut();
+}
 void leds_wifiConnected()
 {
   // fill_solid(leds, NUM_LEDS, CRGB::Green); // https://github.com/FastLED/FastLED/wiki/Pixel-reference#predefined-colors-list
@@ -124,9 +130,13 @@ void leds_mqttConnected()
 
 void leds_redAlert()
 {
-  leds_fadeIn(CRGB::Red);
-  delay(ALERT_COLOR_WAIT_TIME);
-  leds_fadeOut();
+  for (int i = 0; i <= 5; i++)
+  {
+    leds_fadeIn(CRGB::Red);
+    delay(ALERT_COLOR_WAIT_TIME);
+    leds_fadeOut();
+    delay(ALERT_COLOR_WAIT_TIME);
+  }
 }
 
 void leds_redAlertWarning()
@@ -221,7 +231,7 @@ void saveConfig()
 void wifi_begin()
 {
 
-  WiFi.printDiag(Serial); 
+  WiFi.printDiag(Serial);
   bool doubleReset = drd.detectDoubleReset();
   bool noSSID = WiFi.SSID() == "";
   if (doubleReset || noSSID)
@@ -384,11 +394,14 @@ void utils_printLogo()
 
 void setup()
 {
+
   Serial.begin(115200);
   Serial.println();
   delay(500);
   utils_printLogo();
+
   leds_initStrip();
+  leds_programStarted();
   fs_init();
   wifi_begin();
   wifi_printStatus();
