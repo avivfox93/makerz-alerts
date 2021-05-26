@@ -36,15 +36,24 @@ unsigned long lastMsg = 0;
 long int heartbeatValue = 0;
 
 // Leds
-#define NUM_LEDS 10
-#define DATA_PIN 3
+
+#ifndef NUM_LEDS
+  #warning NUM_LEDS not provided as a build flag (in platform.ini). using default value.
+#define NUM_LEDS 300
+#endif // NUM_LEDS
+
+#ifndef PIN_LEDS
+  #warning PIN_LEDS not provided as a build flag (in platform.ini). using default value.
+#define PIN_LEDS 3
+#endif // PIN_LEDS
+
 #define BRIGHTNESS 128
 #define ALERT_COLOR_WAIT_TIME 500
 CRGB leds[NUM_LEDS];
 
 void leds_initStrip()
 {
-  FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);
+  FastLED.addLeds<WS2812B, PIN_LEDS, GRB>(leds, NUM_LEDS);
   FastLED.setBrightness(BRIGHTNESS);
 }
 
@@ -189,11 +198,11 @@ void mqtt_reconnect()
 {
   while (!mqttClient.connected())
   {
-    Serial.print("Attempting MQTT connection...");
+    Serial.println("trying to connect to MQTT...");
 
     if (mqttClient.connect(mqtt_generateClientId().c_str()))
     {
-      Serial.println("connected");
+      Serial.println("mqtt connected");
       mqttClient.subscribe(TOPIC_ALERT_COUNT);
       mqttClient.subscribe(TOPIC_WARNING_COUNT);
       mqttClient.subscribe(TOPIC_ALERT);
