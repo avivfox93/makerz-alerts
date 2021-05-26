@@ -36,7 +36,7 @@ char arealist[2000] = "";
 #define MIN_TIME_BETWEEN_ALERTS_MILLIS 8000
 
 // Heartbeat print
-#define HEARTBEAT_MILLIS 5000
+#define HEARTBEAT_MILLIS 1000 * 60 * 5 //five minutes
 #define HEARTBEAT_MSG_BUFFER_SIZE (50)
 char msg[HEARTBEAT_MSG_BUFFER_SIZE];
 unsigned long lastMsg = 0;
@@ -47,17 +47,18 @@ long int heartbeatValue = 0;
 #define LED_ON HIGH
 #define BRIGHTNESS 128
 #define ALERT_COLOR_WAIT_TIME 500
-CRGB leds[NUM_LEDS];
 
 #ifndef NUM_LEDS
-  #warning NUM_LEDS not provided as a build flag (in platform.ini). using default value.
+#warning NUM_LEDS not provided as a build flag (in platform.ini). using default value.
 #define NUM_LEDS 300
 #endif // NUM_LEDS
 
 #ifndef PIN_LEDS
-  #warning PIN_LEDS not provided as a build flag (in platform.ini). using default value.
+#warning PIN_LEDS not provided as a build flag (in platform.ini). using default value.
 #define PIN_LEDS 3
 #endif // PIN_LEDS
+
+CRGB leds[NUM_LEDS];
 
 void leds_initStrip()
 {
@@ -79,7 +80,7 @@ void leds_fadeOut()
   {
     nscale8(leds, NUM_LEDS, scale);
     FastLED.show();
-    delay(50);
+    delay(25);
     scale = scale - fadeAmount;
   }
 }
@@ -89,29 +90,41 @@ void leds_rainbow(uint8_t hue)
   fill_rainbow(leds, NUM_LEDS, hue, 255 / NUM_LEDS);
   FastLED.show();
 }
+void leds_fadeIn(CRGB target)
+{
+  int steps = 50;
+  for (uint8_t b = 0; b < steps; b++)
+  {
+    fill_solid(leds, NUM_LEDS, CRGB(target.red * b / steps, target.green * b / steps, target.blue * b / steps));
+    FastLED.show();
+
+    delay(10);
+  };
+}
 
 void leds_wifiConnected()
 {
-  fill_solid(leds, NUM_LEDS, CRGB::Green); // https://github.com/FastLED/FastLED/wiki/Pixel-reference#predefined-colors-list
-  FastLED.show();
+  // fill_solid(leds, NUM_LEDS, CRGB::Green); // https://github.com/FastLED/FastLED/wiki/Pixel-reference#predefined-colors-list
+  leds_fadeIn(CRGB::Green);
+  delay(500);
   leds_fadeOut();
 }
 
-void leds_wifiFailedToConnect() {
- fill_solid(leds, NUM_LEDS, CRGB::Blue);
+void leds_wifiFailedToConnect()
+{
+  fill_solid(leds, NUM_LEDS, CRGB::Blue);
 }
 
 void leds_mqttConnected()
 {
-  fill_solid(leds, NUM_LEDS, CRGB::HotPink);
-  FastLED.show();
+  leds_fadeIn(CRGB::HotPink);
+
   leds_fadeOut();
 }
 
 void leds_redAlert()
 {
-  fill_solid(leds, NUM_LEDS, CRGB::Red);
-  FastLED.show();
+  leds_fadeIn(CRGB::Red);
   delay(ALERT_COLOR_WAIT_TIME);
   leds_fadeOut();
 }
@@ -207,9 +220,8 @@ void saveConfig()
 
 void wifi_begin()
 {
-  // Reset settings - for testing
-  // wifiManager.resetSettings();
-  WiFi.printDiag(Serial); // Remove this line if you do not want to see WiFi password printed
+
+  WiFi.printDiag(Serial); 
   bool doubleReset = drd.detectDoubleReset();
   bool noSSID = WiFi.SSID() == "";
   if (doubleReset || noSSID)
@@ -221,7 +233,7 @@ void wifi_begin()
     {
       leds_wifiFailedToConnect();
       Serial.println("failed to connect and should not get here");
-    } 
+    }
     if (shouldSaveConfig)
     {
       saveConfig();
@@ -237,7 +249,8 @@ void wifi_begin()
   }
 }
 
-void wifi_printStatus() {
+void wifi_printStatus()
+{
   while (WiFi.status() != WL_CONNECTED)
   {
     delay(500);
@@ -274,7 +287,7 @@ void mqtt_eventCallback(char *topic, byte *payload, unsigned int length)
   String strAlertCounter = "";
   String strReversedPayload = " ";
 
-  for (int i = 0; i < length; i++)
+  for (uint i = 0; i < length; i++)
   {
     char currentChar = (char)payload[i];
     strPayload += currentChar;
@@ -293,10 +306,10 @@ void mqtt_eventCallback(char *topic, byte *payload, unsigned int length)
     {
       ///TODO: light LEDs only if alert is on in current location.
       leds_redAlert();
-      last_alert = millis(); 
+      last_alert = millis();
     }
   }
-  
+
   Serial.print("strPayload: ");
   Serial.println(strPayload);
   Serial.print("strAlertCounter ");
@@ -321,6 +334,8 @@ void mqtt_reconnect()
 {
   while (!mqttClient.connected())
   {
+    drd.loop();
+
     Serial.println("trying to connect to MQTT...");
 
     if (mqttClient.connect(mqtt_generateClientId().c_str()))
@@ -355,7 +370,8 @@ void utils_printHeartbeat()
   }
 }
 
-void utils_printLogo() { 
+void utils_printLogo()
+{
   Serial.println();
   Serial.println("___  ___      _                   _ ");
   Serial.println("|  \\/  |     | |                 | |");
