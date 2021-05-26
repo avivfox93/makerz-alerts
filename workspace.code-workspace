@@ -1,9 +1,6 @@
 {
 	"folders": [
 		{
-			"path": "../visual-red-alerts"
-		},
-		{
 			"name": "makerz-alerts",
 			"path": "."
 		}
@@ -29,7 +26,8 @@
 			"utility": "cpp",
 			"typeinfo": "cpp",
 			"fstream": "cpp",
-			"memory": "cpp"
+			"memory": "cpp",
+			"string": "cpp"
 		}
 	}
 }

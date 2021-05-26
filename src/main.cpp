@@ -3,9 +3,12 @@
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
 #include <WiFiManager.h>
-#include <DoubleResetDetector.h>
+#include <ESP_DoubleResetDetector.h>
 #include <PubSubClient.h>
 #include <FastLED.h>
+#include <FS.h>
+#include <ArduinoJson.h>
+#include <string.h>
 
 // DRD
 #define DRD_TIMEOUT 10 // timeout for 2nd click (double reset)
@@ -16,6 +19,9 @@
 DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 WiFiManager wifiManager;
 WiFiClient espClient;
+WiFiManagerParameter *custom_arealist;
+bool fsMounted = false;
+bool shouldSaveConfig = false;
 
 // MQTT
 #define TOPIC_ALERT "ra_alert"
@@ -26,7 +32,8 @@ WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 const char *mqtt_server = "mqtt.makerspace.co.il";
 const int mqtt_port = 1883;
-const char *topic_sub = "ra_alert";
+char arealist[2000] = "";
+#define MIN_TIME_BETWEEN_ALERTS_MILLIS 8000
 
 // Heartbeat print
 #define HEARTBEAT_MILLIS 5000
@@ -36,6 +43,11 @@ unsigned long lastMsg = 0;
 long int heartbeatValue = 0;
 
 // Leds
+#define LED_OFF LOW
+#define LED_ON HIGH
+#define BRIGHTNESS 128
+#define ALERT_COLOR_WAIT_TIME 500
+CRGB leds[NUM_LEDS];
 
 #ifndef NUM_LEDS
   #warning NUM_LEDS not provided as a build flag (in platform.ini). using default value.
@@ -46,10 +58,6 @@ long int heartbeatValue = 0;
   #warning PIN_LEDS not provided as a build flag (in platform.ini). using default value.
 #define PIN_LEDS 3
 #endif // PIN_LEDS
-
-#define BRIGHTNESS 128
-#define ALERT_COLOR_WAIT_TIME 500
-CRGB leds[NUM_LEDS];
 
 void leds_initStrip()
 {
@@ -89,6 +97,10 @@ void leds_wifiConnected()
   leds_fadeOut();
 }
 
+void leds_wifiFailedToConnect() {
+ fill_solid(leds, NUM_LEDS, CRGB::Blue);
+}
+
 void leds_mqttConnected()
 {
   fill_solid(leds, NUM_LEDS, CRGB::HotPink);
@@ -106,15 +118,126 @@ void leds_redAlert()
 
 void leds_redAlertWarning()
 {
-  fill_solid(leds, NUM_LEDS, CRGB::Yellow);
+  fill_solid(leds, NUM_LEDS, CRGB::Orange);
   FastLED.show();
   delay(ALERT_COLOR_WAIT_TIME);
   leds_fadeOut();
 }
 
-void wifi_connectOrAP()
+void fs_init()
 {
-  wifiManager.autoConnect(AP_NAME);
+  // Read configuration from FS json
+  Serial.println("mounting FS...");
+  fsMounted = SPIFFS.begin();
+  if (fsMounted)
+  {
+    Serial.println("Mounted file system");
+    if (SPIFFS.exists("/config.json"))
+    {
+      // File exists, reading and loading
+      Serial.println("reading config file");
+      File configFile = SPIFFS.open("/config.json", "r");
+      if (configFile)
+      {
+        Serial.println("opened config file");
+        size_t size = configFile.size();
+        // Allocate a buffer to store the content of the file
+        std::unique_ptr<char[]> buf(new char[size]);
+        configFile.readBytes(buf.get(), size);
+        Serial.println(buf.get());
+        DynamicJsonDocument doc(1024);
+        deserializeJson(doc, buf.get());
+        strcpy(arealist, doc["arealist"]);
+        Serial.print("areas:  ");
+        Serial.println(arealist);
+      }
+    }
+    else
+    {
+      Serial.println("/config.json not found");
+    }
+  }
+  else
+  {
+    Serial.println("failed to mount FS");
+  }
+  custom_arealist = new WiFiManagerParameter("area_list", "רשימת אזורים", arealist, 250);
+}
+
+// Callback indicating to save config
+void saveConfigCallback()
+{
+  Serial.println("Should save config");
+  shouldSaveConfig = true;
+}
+
+void saveConfig()
+{
+  if (fsMounted)
+  {
+    Serial.println("Saving config...");
+    //read updated parameters
+    strcpy(arealist, custom_arealist->getValue());
+    StaticJsonDocument<256> json;
+    //  JsonObject json = jsonBuffer.to<JsonObject>();
+
+    json["arealist"] = arealist;
+    String output;
+    serializeJson(json, output);
+
+    File configFile = SPIFFS.open("/config.json", "w");
+    if (!configFile)
+    {
+      Serial.println("failed to open config file for writing");
+    }
+    else
+    {
+      Serial.println(output);
+      configFile.print(output);
+      configFile.close();
+    }
+  }
+  else
+  {
+    Serial.println("failed to mount FS");
+  }
+  shouldSaveConfig = false;
+  drd.stop();
+}
+
+void wifi_begin()
+{
+  // Reset settings - for testing
+  // wifiManager.resetSettings();
+  WiFi.printDiag(Serial); // Remove this line if you do not want to see WiFi password printed
+  bool doubleReset = drd.detectDoubleReset();
+  bool noSSID = WiFi.SSID() == "";
+  if (doubleReset || noSSID)
+  {
+    Serial.println("double reset or no SSID");
+    wifiManager.setSaveConfigCallback(saveConfigCallback);
+    wifiManager.addParameter(custom_arealist);
+    if (!wifiManager.startConfigPortal(AP_NAME))
+    {
+      leds_wifiFailedToConnect();
+      Serial.println("failed to connect and should not get here");
+    } 
+    if (shouldSaveConfig)
+    {
+      saveConfig();
+    }
+
+    // TODO needs clarification
+    // rebooting is the easiest way to start making use of the new configuration.
+    // once only wifi is being set, move this reboot to where the config setup failed.
+    Serial.println("going to reboot after saving");
+    delay(3000);
+    ESP.reset();
+    delay(5000);
+  }
+}
+
+void wifi_printStatus() {
   while (WiFi.status() != WL_CONNECTED)
   {
     delay(500);
@@ -123,12 +246,24 @@ void wifi_connectOrAP()
   randomSeed(micros());
   Serial.println("");
   Serial.println("WiFi connected");
-
   leds_wifiConnected();
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 }
 
+void utils_inPlaceReverse(String &str)
+{
+  int n = str.length();
+  // Swap character starting from two corners
+  for (int i = 0; i < n / 2; i++)
+  {
+    char t;
+    t = str[n - i - 1];
+    str[n - i - 1] = str[i];
+    str[i] = t;
+  }
+}
+long last_alert = millis();
 void mqtt_eventCallback(char *topic, byte *payload, unsigned int length)
 {
   Serial.print("Event received [topic ");
@@ -136,50 +271,38 @@ void mqtt_eventCallback(char *topic, byte *payload, unsigned int length)
   Serial.print("]: ");
 
   String strPayload = " ";
-  String Digits = "";
+  String strAlertCounter = "";
   String strReversedPayload = " ";
 
   for (int i = 0; i < length; i++)
   {
-    char inChar = (char)payload[i];
-    strPayload += inChar;
-    strReversedPayload += inChar;
-    if (isDigit(inChar))
+    char currentChar = (char)payload[i];
+    strPayload += currentChar;
+    if (isDigit(currentChar))
     {
-      Digits += inChar;
+      strAlertCounter += currentChar;
     }
   }
-  strReversedPayload += "*";
-  strPayload += " ";
-
-  for (int i = 0; i < strReversedPayload.length(); i++)
-  {
-    strReversedPayload.setCharAt(strReversedPayload.length() - i - 1, strPayload[i]);
-  }
+  strReversedPayload = strPayload;
+  utils_inPlaceReverse(strReversedPayload);
 
   if (String(topic).indexOf(TOPIC_ALERT_COUNT) != -1)
   {
-    int alertsCount = Digits.toInt();
-    if (alertsCount > 0)
+    int alertCounter = strAlertCounter.toInt();
+    if (alertCounter > 0 && (millis() - last_alert > MIN_TIME_BETWEEN_ALERTS_MILLIS))
     {
+      ///TODO: light LEDs only if alert is on in current location.
       leds_redAlert();
+      last_alert = millis(); 
     }
   }
-  //if we alert in red, no need to mention warnings as well
-  else
-  {
-    if (String(topic).indexOf(TOPIC_WARNING_COUNT) != -1)
-    {
-      int warningcount = Digits.toInt();
-      if (warningcount > 0)
-      {
-        leds_redAlertWarning();
-      }
-    }
-  }
+  
+  Serial.print("strPayload: ");
   Serial.println(strPayload);
+  Serial.print("strAlertCounter ");
+  Serial.println(strAlertCounter);
+  Serial.print("strReversedPayload: ");
   Serial.println(strReversedPayload);
-  Serial.println(Digits);
 }
 
 void mqtt_init()
@@ -220,21 +343,6 @@ void mqtt_reconnect()
     }
   }
 }
-void drd_setup()
-{
-  if (drd.detectDoubleReset())
-  {
-    Serial.println("Double Reset Detected - erasing Config, restarting");
-    digitalWrite(LED_BUILTIN, LOW);
-    // wifiManager.resetSettings();
-  }
-  else
-  {
-    Serial.println("No Double Reset Detected");
-    digitalWrite(LED_BUILTIN, HIGH);
-  }
-}
-
 void utils_printHeartbeat()
 {
   unsigned long now = millis();
@@ -247,11 +355,27 @@ void utils_printHeartbeat()
   }
 }
 
+void utils_printLogo() { 
+  Serial.println();
+  Serial.println("___  ___      _                   _ ");
+  Serial.println("|  \\/  |     | |                 | |");
+  Serial.println("| .  . | __ _| | _____ _ __ ____ | |");
+  Serial.println("| |\\/| |/ _` | |/ / _ \\ '__|_  / | |");
+  Serial.println("| |  | | (_| |   <  __/ |   / /  |_|");
+  Serial.println("\\_|  |_/\\__,_|_|\\_\\___|_|  /___| (_)");
+  Serial.println();
+}
+
 void setup()
 {
   Serial.begin(115200);
+  Serial.println();
+  delay(500);
+  utils_printLogo();
   leds_initStrip();
-  wifi_connectOrAP();
+  fs_init();
+  wifi_begin();
+  wifi_printStatus();
   mqtt_init();
 }
 
