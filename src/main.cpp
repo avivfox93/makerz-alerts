@@ -1,15 +1,15 @@
 #include <Arduino.h>
-#include <ESP8266WiFi.h> 
+#include <ESP8266WiFi.h>
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
-#include <WiFiManager.h> 
+#include <WiFiManager.h>
 #include <DoubleResetDetector.h>
 #include <PubSubClient.h>
 #include <FastLED.h>
 
 // DRD
 #define DRD_TIMEOUT 10 // timeout for 2nd click (double reset)
-#define DRD_ADDRESS 0 // RTC Memory Address for the DoubleResetDetector  
+#define DRD_ADDRESS 0  // RTC Memory Address for the DoubleResetDetector
 
 // WiFi
 #define AP_NAME "makers-alerts-AP"
@@ -22,10 +22,10 @@ WiFiClient espClient;
 #define TOPIC_WARNING "ra_warning"
 #define TOPIC_ALERT_COUNT "ra_alert/count"
 #define TOPIC_WARNING_COUNT "ra_warning/count"
+#define TOPIC_HEARTBEAT "client_heartbeat"
 PubSubClient mqttClient(espClient);
 const char *mqtt_server = "mqtt.makerspace.co.il";
 const int mqtt_port = 1883;
-const char *topic_pub = "client_heatbeat"; // TODO: rename topic (typo)
 const char *topic_sub = "ra_alert";
 
 // Heartbeat print
@@ -38,57 +38,73 @@ long int heartbeatValue = 0;
 // Leds
 #define NUM_LEDS 10
 #define DATA_PIN 3
-#define BRIGHTNESS  128
+#define BRIGHTNESS 128
 #define ALERT_COLOR_WAIT_TIME 500
 CRGB leds[NUM_LEDS];
 
-void leds_initStrip() {
+void leds_initStrip()
+{
   FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);
   FastLED.setBrightness(BRIGHTNESS);
 }
 
-void leds_turnOff() {
-  fadeToBlackBy(leds, NUM_LEDS, 0);
-  FastLED.show();
-}
-void leds_rainbow(uint8_t hue) {
-  fill_rainbow(leds, NUM_LEDS, hue, 255/NUM_LEDS);
+void leds_turnOff()
+{
+  FastLED.clear();
   FastLED.show();
 }
 
-void leds_wifiConnected() {
-  fill_solid(leds, NUM_LEDS, CRGB::Green); // https://github.com/FastLED/FastLED/wiki/Pixel-reference#predefined-colors-list
-  FastLED.show();
-}
-
-void leds_fadeOut(){
+void leds_fadeOut()
+{
   int fadeAmount = 1;
-  int brightness = 255;
-  while (brightness >= 0) {
-    nscale8(leds, NUM_LEDS, brightness); 
+  int scale = 255;
+  while (scale >= 0)
+  {
+    nscale8(leds, NUM_LEDS, scale);
     FastLED.show();
     delay(50);
-    brightness = brightness - fadeAmount;
+    scale = scale - fadeAmount;
   }
 }
 
-void leds_redAlert() {
-  fill_solid(leds, NUM_LEDS, CRGB::Red); 
+void leds_rainbow(uint8_t hue)
+{
+  fill_rainbow(leds, NUM_LEDS, hue, 255 / NUM_LEDS);
+  FastLED.show();
+}
+
+void leds_wifiConnected()
+{
+  fill_solid(leds, NUM_LEDS, CRGB::Green); // https://github.com/FastLED/FastLED/wiki/Pixel-reference#predefined-colors-list
+  FastLED.show();
+  leds_fadeOut();
+}
+
+void leds_mqttConnected()
+{
+  fill_solid(leds, NUM_LEDS, CRGB::HotPink);
+  FastLED.show();
+  leds_fadeOut();
+}
+
+void leds_redAlert()
+{
+  fill_solid(leds, NUM_LEDS, CRGB::Red);
   FastLED.show();
   delay(ALERT_COLOR_WAIT_TIME);
   leds_fadeOut();
 }
 
-void leds_redAlertWarning() {
-  fill_solid(leds, NUM_LEDS, CRGB::Yellow); 
+void leds_redAlertWarning()
+{
+  fill_solid(leds, NUM_LEDS, CRGB::Yellow);
   FastLED.show();
   delay(ALERT_COLOR_WAIT_TIME);
   leds_fadeOut();
 }
 
-
-
-void wifi_connectOrAP() {
+void wifi_connectOrAP()
+{
   wifiManager.autoConnect(AP_NAME);
   while (WiFi.status() != WL_CONNECTED)
   {
@@ -98,7 +114,7 @@ void wifi_connectOrAP() {
   randomSeed(micros());
   Serial.println("");
   Serial.println("WiFi connected");
-  
+
   leds_wifiConnected();
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
@@ -124,12 +140,12 @@ void mqtt_eventCallback(char *topic, byte *payload, unsigned int length)
       Digits += inChar;
     }
   }
-  strReversedPayload += "*"; 
-  strPayload += " "; 
+  strReversedPayload += "*";
+  strPayload += " ";
 
   for (int i = 0; i < strReversedPayload.length(); i++)
   {
-    strReversedPayload.setCharAt(strReversedPayload.length() - i-1, strPayload[i]);
+    strReversedPayload.setCharAt(strReversedPayload.length() - i - 1, strPayload[i]);
   }
 
   if (String(topic).indexOf(TOPIC_ALERT_COUNT) != -1)
@@ -140,7 +156,8 @@ void mqtt_eventCallback(char *topic, byte *payload, unsigned int length)
       leds_redAlert();
     }
   }
-  else //if we alert in red, no need to mention warnings as well
+  //if we alert in red, no need to mention warnings as well
+  else
   {
     if (String(topic).indexOf(TOPIC_WARNING_COUNT) != -1)
     {
@@ -177,11 +194,13 @@ void mqtt_reconnect()
     if (mqttClient.connect(mqtt_generateClientId().c_str()))
     {
       Serial.println("connected");
-      //  mqttClient.publish(topic_pub, "device connected");
       mqttClient.subscribe(TOPIC_ALERT_COUNT);
       mqttClient.subscribe(TOPIC_WARNING_COUNT);
       mqttClient.subscribe(TOPIC_ALERT);
       mqttClient.subscribe(TOPIC_WARNING);
+      leds_mqttConnected();
+      // Notify server
+      //  mqttClient.publish(TOPIC_HEARTBEAT, "device connected");
     }
     else
     {
@@ -192,41 +211,43 @@ void mqtt_reconnect()
     }
   }
 }
-void drd_setup() {
+void drd_setup()
+{
   if (drd.detectDoubleReset())
   {
     Serial.println("Double Reset Detected - erasing Config, restarting");
     digitalWrite(LED_BUILTIN, LOW);
-    wifiManager.resetSettings();  
-  } else {
-  // Or else... not restarting
+    // wifiManager.resetSettings();
+  }
+  else
+  {
     Serial.println("No Double Reset Detected");
-   digitalWrite(LED_BUILTIN, HIGH);
+    digitalWrite(LED_BUILTIN, HIGH);
   }
 }
 
-void utils_printHeartbeat() {    
+void utils_printHeartbeat()
+{
   unsigned long now = millis();
   if (now - lastMsg > HEARTBEAT_MILLIS)
   {
     lastMsg = now;
     ++heartbeatValue;
-    Serial.print("Alive: ");
     snprintf(msg, HEARTBEAT_MSG_BUFFER_SIZE, "heartbeat #%ld %s", heartbeatValue, mqtt_generateClientId().c_str());
     Serial.println(msg);
   }
 }
 
-void setup() {
+void setup()
+{
   Serial.begin(115200);
   leds_initStrip();
-  drd_setup();
-  leds_redAlert();
-   wifi_connectOrAP();
-   mqtt_init();
+  wifi_connectOrAP();
+  mqtt_init();
 }
 
-void loop() {
+void loop()
+{
   drd.loop();
   if (!mqttClient.connected())
   {
