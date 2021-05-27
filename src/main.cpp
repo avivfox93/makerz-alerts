@@ -42,6 +42,13 @@ char msg[HEARTBEAT_MSG_BUFFER_SIZE];
 unsigned long lastMsg = 0;
 long int heartbeatValue = 0;
 
+// I'm alive LED
+unsigned long last_blink = millis();
+#ifndef STATUS_LED_DELAY
+#define STATUS_LED_DELAY -1
+#endif
+signed long statusLEDInterval = STATUS_LED_DELAY;
+
 // Leds
 #define LED_OFF LOW
 #define LED_ON HIGH
@@ -392,6 +399,35 @@ void utils_printLogo()
   Serial.println();
 }
 
+void utils_BlinkAlive()
+{
+
+  if (statusLEDInterval == -1)
+    return;
+  if (millis() - last_blink > statusLEDInterval)
+  {
+    last_blink = millis();
+
+    int steps = 75;
+    int strength = 64; 
+    for (uint8_t b = 0; b < steps; b++)
+    {
+      leds[3] = CRGB(0, strength * b / steps, 0 * b / steps);
+      FastLED.show();
+
+      delay(10);
+    };
+     for (uint8_t b = steps; b > 0; b--)
+    {
+      leds[3] = CRGB(0, strength * b / steps, 0 * b / steps);
+      FastLED.show();
+
+      delay(10);
+    };
+    leds[3] = CRGB(0,0,0); FastLED.show();
+  }
+}
+
 void setup()
 {
 
@@ -417,4 +453,5 @@ void loop()
   }
   mqttClient.loop();
   utils_printHeartbeat();
+  utils_BlinkAlive(); 
 }
