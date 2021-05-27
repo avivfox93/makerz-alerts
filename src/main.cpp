@@ -10,12 +10,15 @@
 #include <ArduinoJson.h>
 #include <string.h>
 
+//Genereal
+#define version 0.9
+
 // DRD
 #define DRD_TIMEOUT 10 // timeout for 2nd click (double reset)
 #define DRD_ADDRESS 0  // RTC Memory Address for the DoubleResetDetector
 
 // WiFi
-#define AP_NAME "makers-alerts-AP"
+#define AP_NAME "makers-"
 DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 WiFiManager wifiManager;
 WiFiClient espClient;
@@ -29,6 +32,8 @@ bool shouldSaveConfig = false;
 #define TOPIC_ALERT_COUNT "ra_alert/count"
 #define TOPIC_WARNING_COUNT "ra_warning/count"
 #define TOPIC_HEARTBEAT "client_heartbeat"
+#define TOPIC_CLIENT_TEST "ra_client/self-test"
+
 PubSubClient mqttClient(espClient);
 const char *mqtt_server = "mqtt.makerspace.co.il";
 const int mqtt_port = 1883;
@@ -66,6 +71,8 @@ signed long statusLEDInterval = STATUS_LED_DELAY;
 #endif // PIN_LEDS
 
 CRGB leds[NUM_LEDS];
+
+void utils_inPlaceReverse(String &str);
 
 void leds_initStrip()
 {
@@ -153,7 +160,16 @@ void leds_redAlertWarning()
   delay(ALERT_COLOR_WAIT_TIME);
   leds_fadeOut();
 }
-
+String mqtt_generateClientId()
+{
+  String s = WiFi.macAddress();
+  s.replace("-", "");
+  s.replace(":", "");
+  s.replace(" ", "");
+  s = s.substring(0, 6);
+  utils_inPlaceReverse(s);
+  return s;
+}
 void fs_init()
 {
   // Read configuration from FS json
@@ -241,12 +257,17 @@ void wifi_begin()
   WiFi.printDiag(Serial);
   bool doubleReset = drd.detectDoubleReset();
   bool noSSID = WiFi.SSID() == "";
+  String _ssid = AP_NAME + mqtt_generateClientId();
+  int str_len = _ssid.length() + 1;
+  char char_array[str_len];
+  _ssid.toCharArray(char_array, str_len);
+
   if (doubleReset || noSSID)
   {
     Serial.println("double reset or no SSID");
     wifiManager.setSaveConfigCallback(saveConfigCallback);
     wifiManager.addParameter(custom_arealist);
-    if (!wifiManager.startConfigPortal(AP_NAME))
+    if (!wifiManager.startConfigPortal(char_array))
     {
       leds_wifiFailedToConnect();
       Serial.println("failed to connect and should not get here");
@@ -313,6 +334,7 @@ void mqtt_eventCallback(char *topic, byte *payload, unsigned int length)
       strAlertCounter += currentChar;
     }
   }
+  strPayload.replace(" ", "");
   strReversedPayload = strPayload;
   utils_inPlaceReverse(strReversedPayload);
 
@@ -324,6 +346,27 @@ void mqtt_eventCallback(char *topic, byte *payload, unsigned int length)
       ///TODO: light LEDs only if alert is on in current location.
       leds_redAlert();
       last_alert = millis();
+    }
+  }
+
+  if (String(topic).indexOf(TOPIC_CLIENT_TEST) != -1)
+  {
+    Serial.println("*self-test*");
+    Serial.println(mqtt_generateClientId());
+    if (strPayload == mqtt_generateClientId())
+    {
+      leds_rainbow(100);
+      leds_fadeOut();
+      delay(300);
+      leds_fadeIn(CRGB::Aquamarine);
+      leds_fadeOut();
+      delay(300);
+      leds_fadeIn(CRGB::DarkBlue);
+      leds_fadeOut();
+      delay(300);
+      leds_fadeIn(CRGB::LightGoldenrodYellow);
+      leds_fadeOut();
+      delay(300);
     }
   }
 
@@ -342,11 +385,6 @@ void mqtt_init()
   Serial.println("MQTT client set-up");
 }
 
-String mqtt_generateClientId()
-{
-  return "client8266-" + String(WiFi.macAddress());
-}
-
 void mqtt_reconnect()
 {
   while (!mqttClient.connected())
@@ -362,6 +400,7 @@ void mqtt_reconnect()
       mqttClient.subscribe(TOPIC_WARNING_COUNT);
       mqttClient.subscribe(TOPIC_ALERT);
       mqttClient.subscribe(TOPIC_WARNING);
+      mqttClient.subscribe(TOPIC_CLIENT_TEST);
       leds_mqttConnected();
       // Notify server
       //  mqttClient.publish(TOPIC_HEARTBEAT, "device connected");
@@ -397,6 +436,8 @@ void utils_printLogo()
   Serial.println("| |  | | (_| |   <  __/ |   / /  |_|");
   Serial.println("\\_|  |_/\\__,_|_|\\_\\___|_|  /___| (_)");
   Serial.println();
+  Serial.println("Red Alert Client MaTrI0N v" + String(version));
+  Serial.println("client id " + mqtt_generateClientId());
 }
 
 void utils_BlinkAlive()
@@ -409,7 +450,7 @@ void utils_BlinkAlive()
     last_blink = millis();
 
     int steps = 75;
-    int strength = 64; 
+    int strength = 64;
     for (uint8_t b = 0; b < steps; b++)
     {
       leds[3] = CRGB(0, strength * b / steps, 0 * b / steps);
@@ -417,14 +458,15 @@ void utils_BlinkAlive()
 
       delay(10);
     };
-     for (uint8_t b = steps; b > 0; b--)
+    for (uint8_t b = steps; b > 0; b--)
     {
       leds[3] = CRGB(0, strength * b / steps, 0 * b / steps);
       FastLED.show();
 
       delay(10);
     };
-    leds[3] = CRGB(0,0,0); FastLED.show();
+    leds[3] = CRGB(0, 0, 0);
+    FastLED.show();
   }
 }
 
@@ -453,5 +495,5 @@ void loop()
   }
   mqttClient.loop();
   utils_printHeartbeat();
-  utils_BlinkAlive(); 
+  utils_BlinkAlive();
 }
