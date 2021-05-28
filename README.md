@@ -1,7 +1,7 @@
 # ✨ Makerz alerts ✨
 ## Red Alert visual notifier
 
-Makerz alerts (aka המתריעון pronounced as Ha-matri-on) is a product that provides visual alerts when a security alert sounds in Israel.
+Makerz alerts (aka המתריעון pronounced as Ha-matri-on) is a product that provides visual alerts when a siren goes off in Israel.
 This repository is the client-side code for ESP8266 controller.
 
 What you'll need to build one by yourself:
