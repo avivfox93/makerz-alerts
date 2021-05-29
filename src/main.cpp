@@ -32,7 +32,8 @@ bool shouldSaveConfig = false;
 #define TOPIC_ALERT_COUNT "ra_alert/count"
 #define TOPIC_WARNING_COUNT "ra_warning/count"
 #define TOPIC_HEARTBEAT "client_heartbeat"
-#define TOPIC_CLIENT_TEST "ra_client/self-test"
+#define TOPIC_CLIENT_SELF_TEST "ra_client/self-test"
+#define TOPIC_CLIENT_RGB "ra_client/RGB"
 
 PubSubClient mqttClient(espClient);
 const char *mqtt_server = "mqtt.makerspace.co.il";
@@ -254,7 +255,7 @@ void saveConfig()
 void wifi_begin()
 {
 
-  WiFi.printDiag(Serial);
+  // WiFi.printDiag(Serial);
   bool doubleReset = drd.detectDoubleReset();
   bool noSSID = WiFi.SSID() == "";
   String _ssid = AP_NAME + mqtt_generateClientId();
@@ -321,14 +322,16 @@ void mqtt_eventCallback(char *topic, byte *payload, unsigned int length)
   Serial.print(topic);
   Serial.print("]: ");
 
-  String strPayload = " ";
+  char chrPayload[length + 1];
+  String strPayload = "";
   String strAlertCounter = "";
-  String strReversedPayload = " ";
+  String strReversedPayload = "";
 
   for (uint i = 0; i < length; i++)
   {
     char currentChar = (char)payload[i];
     strPayload += currentChar;
+    chrPayload[i] = currentChar;
     if (isDigit(currentChar))
     {
       strAlertCounter += currentChar;
@@ -349,7 +352,7 @@ void mqtt_eventCallback(char *topic, byte *payload, unsigned int length)
     }
   }
 
-  if (String(topic).indexOf(TOPIC_CLIENT_TEST) != -1)
+  if (String(topic).indexOf(TOPIC_CLIENT_SELF_TEST) != -1)
   {
     Serial.println("*self-test*");
     Serial.println(mqtt_generateClientId());
@@ -368,6 +371,24 @@ void mqtt_eventCallback(char *topic, byte *payload, unsigned int length)
       leds_fadeOut();
       delay(300);
     }
+  }
+  if (String(topic).indexOf(TOPIC_CLIENT_RGB) != -1)
+  {
+    Serial.println("*RGB*");
+    long C = (long)strtol(&strPayload[2], NULL, 16);
+    unsigned int R = C >> 16;
+    unsigned int G = C >> 8 & 0xFF;
+    unsigned int B = C & 0xFF;
+
+    Serial.print(R);
+    Serial.print(",");
+    Serial.print(G);
+    Serial.print(",");
+    Serial.println(B);
+    CRGB color = CRGB(R, G, B);
+
+    leds_fadeIn(color);
+    leds_fadeOut();
   }
 
   Serial.print("strPayload: ");
@@ -400,7 +421,8 @@ void mqtt_reconnect()
       mqttClient.subscribe(TOPIC_WARNING_COUNT);
       mqttClient.subscribe(TOPIC_ALERT);
       mqttClient.subscribe(TOPIC_WARNING);
-      mqttClient.subscribe(TOPIC_CLIENT_TEST);
+      mqttClient.subscribe(TOPIC_CLIENT_RGB);
+      mqttClient.subscribe(TOPIC_CLIENT_SELF_TEST);
       leds_mqttConnected();
       // Notify server
       //  mqttClient.publish(TOPIC_HEARTBEAT, "device connected");
@@ -440,7 +462,7 @@ void utils_printLogo()
   Serial.println("client id " + mqtt_generateClientId());
 }
 
-void utils_BlinkAlive()
+void utils_BlinkAlive(int r, int g, int b)
 {
 
   if (statusLEDInterval == -1)
@@ -451,16 +473,16 @@ void utils_BlinkAlive()
 
     int steps = 75;
     int strength = 64;
-    for (uint8_t b = 0; b < steps; b++)
+    for (uint8_t i = 0; i < steps; i++)
     {
-      leds[3] = CRGB(0, strength * b / steps, 0 * b / steps);
+      leds[3] = CRGB(r * i / steps, g * i / steps, b * i / steps);
       FastLED.show();
 
       delay(10);
     };
-    for (uint8_t b = steps; b > 0; b--)
+    for (uint8_t i = steps; i > 0; i--)
     {
-      leds[3] = CRGB(0, strength * b / steps, 0 * b / steps);
+      leds[3] = CRGB(r * i / steps, g * i / steps, b * i / steps);
       FastLED.show();
 
       delay(10);
@@ -468,6 +490,27 @@ void utils_BlinkAlive()
     leds[3] = CRGB(0, 0, 0);
     FastLED.show();
   }
+}
+void utils_BlinkAlive()
+{
+  utils_BlinkAlive(0, 255, 0);
+}
+WiFiEventHandler gotIpEventHandler, disconnectedEventHandler;
+bool isWifiConnected = false;
+void onDisconnected(const WiFiEventStationModeDisconnected &event)
+{
+  isWifiConnected = false;
+  statusLEDInterval = 1000;
+}
+void onGotIP(const WiFiEventStationModeGotIP &event)
+{
+  isWifiConnected = true;
+  statusLEDInterval = STATUS_LED_DELAY;
+}
+void wifi_registerEventHandlers()
+{
+  disconnectedEventHandler = WiFi.onStationModeDisconnected(&onDisconnected);
+  gotIpEventHandler = WiFi.onStationModeGotIP(&onGotIP);
 }
 
 void setup()
@@ -477,7 +520,7 @@ void setup()
   Serial.println();
   delay(500);
   utils_printLogo();
-
+  wifi_registerEventHandlers();
   leds_initStrip();
   leds_programStarted();
   fs_init();
@@ -493,7 +536,14 @@ void loop()
   {
     mqtt_reconnect();
   }
+  if (!isWifiConnected)
+  {
+    utils_BlinkAlive(255, 0, 0); //red
+  }
+  else
+  {
+    utils_BlinkAlive(); //green
+  }
   mqttClient.loop();
   utils_printHeartbeat();
-  utils_BlinkAlive();
 }
