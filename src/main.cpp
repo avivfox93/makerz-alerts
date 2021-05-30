@@ -378,7 +378,7 @@ void mqtt_eventCallback(char *topic, byte *payload, unsigned int length)
     long C = (long)strtol(&strPayload[2], NULL, 16);
     unsigned int R = C >> 16;
     unsigned int G = C >> 8 & 0xFF;
-    unsigned int B = C & 0xFF;
+    unsigned int B  = C & 0xFF;
 
     Serial.print(R);
     Serial.print(",");
