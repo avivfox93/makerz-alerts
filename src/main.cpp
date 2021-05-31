@@ -1,7 +1,12 @@
 #include <Arduino.h>
+#if defined(ESP8266)
 #include <ESP8266WiFi.h>
-#include <DNSServer.h>
 #include <ESP8266WebServer.h>
+#elif defined(ESP32)
+#include <WiFi.h>
+#include "SPIFFS.h"
+#endif
+#include <DNSServer.h>
 #include <WiFiManager.h>
 #include <ESP_DoubleResetDetector.h>
 #include <PubSubClient.h>
@@ -19,7 +24,7 @@
 
 // WiFi
 #define AP_NAME "makers-"
-DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
+DoubleResetDetector* drd;
 WiFiManager wifiManager;
 WiFiClient espClient;
 WiFiManagerParameter *custom_arealist;
@@ -175,7 +180,11 @@ void fs_init()
 {
   // Read configuration from FS json
   Serial.println("mounting FS...");
+#if defined(ESP8266)
   fsMounted = SPIFFS.begin();
+#elif defined(ESP32)
+  fsMounted = SPIFFS.begin(true);
+#endif
   if (fsMounted)
   {
     Serial.println("Mounted file system");
@@ -209,6 +218,11 @@ void fs_init()
     Serial.println("failed to mount FS");
   }
   custom_arealist = new WiFiManagerParameter("area_list", "רשימת אזורים", arealist, 250);
+}
+
+void drd_init()
+{
+  drd = new DoubleResetDetector(DRD_TIMEOUT, DRD_ADDRESS);
 }
 
 // Callback indicating to save config
@@ -249,23 +263,31 @@ void saveConfig()
     Serial.println("failed to mount FS");
   }
   shouldSaveConfig = false;
-  drd.stop();
+  drd->stop();
 }
 
 void wifi_begin()
 {
 
   // WiFi.printDiag(Serial);
-  bool doubleReset = drd.detectDoubleReset();
+  bool doubleReset = drd->detectDoubleReset();
+#if defined(ESP8266)
   bool noSSID = WiFi.SSID() == "";
+#elif defined(ESP32)
+  bool noSSID = wifiManager.getWiFiSSID() == "";
+  if(!(doubleReset || noSSID))
+    WiFi.begin();
+#endif
   String _ssid = AP_NAME + mqtt_generateClientId();
   int str_len = _ssid.length() + 1;
   char char_array[str_len];
   _ssid.toCharArray(char_array, str_len);
-
   if (doubleReset || noSSID)
   {
-    Serial.println("double reset or no SSID");
+    Serial.print("double reset or no SSID, DR: ");
+    Serial.print(doubleReset);
+    Serial.print(" SSID: ");
+    Serial.println(WiFi.SSID());
     wifiManager.setSaveConfigCallback(saveConfigCallback);
     wifiManager.addParameter(custom_arealist);
     if (!wifiManager.startConfigPortal(char_array))
@@ -283,7 +305,11 @@ void wifi_begin()
     // once only wifi is being set, move this reboot to where the config setup failed.
     Serial.println("going to reboot after saving");
     delay(3000);
+#if defined(ESP8266)
     ESP.reset();
+#elif defined(ESP32)
+    ESP.restart();
+#endif
     delay(5000);
   }
 }
@@ -410,7 +436,7 @@ void mqtt_reconnect()
 {
   while (!mqttClient.connected())
   {
-    drd.loop();
+    drd->loop();
 
     Serial.println("trying to connect to MQTT...");
 
@@ -495,22 +521,56 @@ void utils_BlinkAlive()
 {
   utils_BlinkAlive(0, 255, 0);
 }
-WiFiEventHandler gotIpEventHandler, disconnectedEventHandler;
+
+
 bool isWifiConnected = false;
+#if defined (ESP8266)
+WiFiEventHandler gotIpEventHandler, disconnectedEventHandler;
 void onDisconnected(const WiFiEventStationModeDisconnected &event)
 {
   isWifiConnected = false;
   statusLEDInterval = 1000;
 }
+
 void onGotIP(const WiFiEventStationModeGotIP &event)
 {
   isWifiConnected = true;
   statusLEDInterval = STATUS_LED_DELAY;
 }
+#elif defined (ESP32)
+void onDisconnected()
+{
+  isWifiConnected = false;
+  statusLEDInterval = 1000;
+}
+
+void onGotIP()
+{
+  isWifiConnected = true;
+  statusLEDInterval = STATUS_LED_DELAY;
+}
+
+void onWiFiEvent(WiFiEvent_t event)
+{
+  switch (event) {
+      case SYSTEM_EVENT_STA_DISCONNECTED:
+          onDisconnected();
+          break;
+      case SYSTEM_EVENT_STA_GOT_IP:
+          onGotIP();
+          break;
+      default: break;
+  }
+}
+#endif
 void wifi_registerEventHandlers()
 {
+#if defined (ESP8266)
   disconnectedEventHandler = WiFi.onStationModeDisconnected(&onDisconnected);
   gotIpEventHandler = WiFi.onStationModeGotIP(&onGotIP);
+#elif defined (ESP32)
+  WiFi.onEvent(onWiFiEvent);
+#endif
 }
 
 void setup()
@@ -524,6 +584,7 @@ void setup()
   leds_initStrip();
   leds_programStarted();
   fs_init();
+  drd_init();
   wifi_begin();
   wifi_printStatus();
   mqtt_init();
@@ -531,7 +592,7 @@ void setup()
 
 void loop()
 {
-  drd.loop();
+  drd->loop();
   if (!mqttClient.connected())
   {
     mqtt_reconnect();
